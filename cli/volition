@@ -18,13 +18,13 @@
 #   volition submit Search            the field's keyboard action - search, go, done
 #   volition tap Retry                a real touch, at the element's own position
 #   volition wait "Chapter 1" [s]     until it is on screen (10 seconds unless told)
+#   volition find Retry               what a name picks; every match, numbered, when there are several
 #
 # What the app says about itself, for waiting on something that is not on screen:
 #
 #   volition check screen=MangaScreen whether where says so, right now
 #   volition wait reader.page>3       until it does - `where` field, then `=`, `!=`, `<`, `>`, `<=`, `>=` or
 #                                     `~` for contains; `stack~Settings` reads inside a list
-#   volition find Retry               what a name picks; every match, numbered, when there are several
 #
 # A name is matched against what an element says, its description, test tag or view id - whole first, then
 # as a part. When several match, the answer lists them and Retry#2 picks the second, top to bottom.
@@ -42,6 +42,12 @@
 #   volition seed library
 #
 # The package comes from -p/--package, $VOLITION_PACKAGE, or a .volition file in the working directory.
+# That file also holds aliases, one per line, for the commands a project keeps typing:
+#
+#   app.komikku.dev
+#   webgpu = go settings_webgpu
+#   read   = wait reader.page>1 30
+#
 # The device comes from -s/--serial or $ANDROID_SERIAL, as adb reads it.
 set -uo pipefail
 
@@ -58,8 +64,12 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ -z "$PACKAGE" ] && [ -f .volition ]; then
-    PACKAGE=$(grep -v '^[[:space:]]*#' .volition | head -1 | tr -d '[:space:]')
+# A `.volition` file in the working directory: the package on a line of its own, and any number of
+# aliases, `name = the rest of a volition command line`.
+CONFIG=""
+[ -f .volition ] && CONFIG=$(grep -v '^[[:space:]]*#' .volition)
+if [ -z "$PACKAGE" ] && [ -n "$CONFIG" ]; then
+    PACKAGE=$(printf '%s\n' "$CONFIG" | grep -v '=' | head -1 | tr -d '[:space:]')
 fi
 if [ -z "$PACKAGE" ]; then
     echo "which app? pass -p <applicationId>, set VOLITION_PACKAGE, or write it in a .volition file" >&2
@@ -129,6 +139,20 @@ ensure_ready() {
 cmd="${1:-where}"
 shift || true
 
+# An alias stands for the start of a command line, so `webgpu = go settings_webgpu` makes `volition webgpu`
+# that, and anything typed after it is passed on. One level: an alias does not expand another.
+if [ -n "$CONFIG" ]; then
+    expansion=$(printf '%s\n' "$CONFIG" | awk -v name="$cmd" -F= '
+        { key = $1; gsub(/^[ \t]+|[ \t]+$/, "", key) }
+        key == name { sub(/^[^=]*=[ \t]*/, ""); print; exit }
+    ')
+    if [ -n "$expansion" ]; then
+        set -- $expansion "$@"
+        cmd="$1"
+        shift
+    fi
+fi
+
 case "$cmd" in
     where|state) ensure_ready && bridge where ;;
     list|destinations) ensure_ready && bridge destinations ;;
@@ -150,6 +174,28 @@ case "$cmd" in
     fill)
         [ $# -ge 2 ] || { echo "fill needs a field and the text for it - \"\" names the focused field" >&2; exit 2; }
         ensure_ready && bridge fill "$1"$'\x1f'"$2"
+        ;;
+    check)
+        [ $# -ge 1 ] || { echo "check needs a condition - screen=MangaScreen, reader.page>3" >&2; exit 2; }
+        ensure_ready && bridge check "$1"
+        ;;
+    wait)
+        [ $# -ge 1 ] || { echo "wait needs a name or a condition, and optionally how many seconds" >&2; exit 2; }
+        ensure_ready || exit 1
+        # A condition is answered by `where`, a name by what is on screen.
+        case "$1" in
+            *[=\<\>~]*) probe=check ;;
+            *) probe=find ;;
+        esac
+        deadline=$((SECONDS + ${2:-10}))
+        until found=$(bridge "$probe" "$1" 2>/dev/null); do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "error: '$1' did not come true in ${2:-10}s" >&2
+                exit 1
+            fi
+            sleep 0.3
+        done
+        printf '%s\n' "$found"
         ;;
     shot)
         file="${1:-volition.png}"

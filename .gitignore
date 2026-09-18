@@ -17,3 +17,6 @@ captures/
 # Misc
 .DS_Store
 
+
+# A local .volition names the app being driven and its aliases - that is per checkout, not per project.
+.volition
