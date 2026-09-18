@@ -59,7 +59,7 @@ Once, where the app starts - `Application.onCreate`, or wherever the navigator b
 
 ```kotlin
 Volition.register {
-    voyager(MainActivity::class.java) { navigatorOrNull }        // Voyager apps: stack, back, home
+    voyager(MainActivity::class.java) { navigatorOrNull }        // Voyager: stack, back, home
     screen("settings_webgpu", "webgpu") { SettingsWebGpuScreen }
     screen("manga", takesArgument = true) { id -> MangaScreen(id.toLong()) }
     destination("library") { openTab(Tab.Library()); "ok: library" }
@@ -70,6 +70,9 @@ Volition.register {
 
 - `voyager` takes the activity that holds the stack, so `back` closes another activity sitting on top of it - a
   reader, a viewer - instead of popping a screen nobody is looking at.
+- Jetpack Navigation instead: `navigation(MainActivity::class.java) { navController }` and `route("manga",
+  takesArgument = true) { id -> "manga/$id" }`. Fragments and Compose Navigation are the same `NavController`, so one
+  adapter covers both, and the current route - with the one it came from - shows up in `where`.
 - `screen` takes a Voyager `Screen`; `popFirst = true` clears the stack first, which is what a destination sitting
   under everything else (a tab) wants.
 - `destination` is the general form - any suspending lambda that returns what the caller should see. Use it for
@@ -77,8 +80,8 @@ Volition.register {
 - `command` is for what is not a place: seeding data, clearing a cache, forcing a sync.
 - `state` adds a field to `where`. These are read every time anyone asks, so keep them cheap.
 
-Without the Voyager adapter nothing is lost but the stack and the two navigation destinations; `destination` covers
-Fragments, Compose Navigation, plain Activities and anything else.
+Without an adapter nothing is lost but the stack and the two navigation destinations; `destination` covers anything
+else that moves the app.
 
 ## From the terminal
 
@@ -92,9 +95,15 @@ Fragments, Compose Navigation, plain Activities and anything else.
 | `volition back` / `home` | up one screen, or back to the root |
 | `volition pref <key>` | read a preference; `<key>=<value>` writes it live, no restart and no root |
 | `volition shot [file]` | screenshot |
+| `volition check <condition>` | whether what `where` says is so - `screen=MangaScreen`, `reader.page>3` |
+| `volition wait <condition> [s]` | until it is, instead of sleeping and hoping |
 | `volition help` | what this app answers, its own commands included |
 
 Anything else is passed to the app, so `volition seed library` reaches a `command("seed")` it registered.
+
+A condition is a field of `where`, then `=`, `!=`, `<`, `>`, `<=`, `>=` or `~` for contains. A path reaches inside
+what a `state` published - `reader.page>3` - and `~` looks through a list, so `stack~SettingsScreen` asks whether that
+screen is anywhere in it. Numbers compare as numbers, text ignores case.
 
 ## What is on screen
 
@@ -146,13 +155,35 @@ A `command` is still the better tool for setup a script repeats - seeding data, 
 UI entirely.
 
 The package comes from `-p`, `$VOLITION_PACKAGE`, or a `.volition` file in the working directory; the device from
-`-s` or `$ANDROID_SERIAL`.
+`-s` or `$ANDROID_SERIAL`. That file also holds the aliases a project keeps typing:
+
+```
+app.komikku.dev
+
+webgpu = go settings_webgpu
+reader = wait reader.page>0 20
+```
+
+An alias stands for the start of a command line, and whatever is typed after it is passed on.
 
 Without the script:
 
 ```
 adb shell content call --uri content://<applicationId>.volition --method go --arg settings_webgpu
 ```
+
+## From an agent
+
+`mcp/volition-mcp` is the same thing over MCP, so an agent gets `where`, `ui`, `go`, `click`, `fill`, `wait` and the
+rest as tools instead of guessing at coordinates in a screenshot:
+
+```
+claude mcp add volition -- /path/to/volition/mcp/volition-mcp
+```
+
+It takes the same `-p`, `-s` and `--launch` options as the CLI, reads the same `.volition` file, and every tool takes
+a `package` for a session driving more than one app. Python 3, no dependencies. `screenshot` is there too, for when
+what matters is how something looks rather than what it says.
 
 ## Starting the app
 
@@ -174,7 +205,9 @@ ability to navigate that build and read and write its preferences.
 
 ## Building
 
-`./gradlew :library:assembleRelease`.
+`./gradlew :library:assembleRelease`. `sample/` is a small app that carries Volition, which is what the adapters and
+the element reader are driven against: `./gradlew :sample:installDebug`, then `volition -p dev.mkonic.volition.sample
+ui`.
 
 ## License
 
