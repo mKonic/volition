@@ -125,7 +125,11 @@ object Volition {
                     when (method) {
                         "help", "commands" -> help()
                         "destinations" -> destinations()
-                        "where", "state" -> state()
+                        "where", "state" -> stateJson().toString()
+                        "check" -> Condition.test(
+                            stateJson(),
+                            argument ?: return@withTimeout "error: check needs a condition",
+                        )
                         "go" -> go(argument ?: return@withTimeout "error: go needs a destination")
                         "pref" -> pref(context, argument ?: return@withTimeout "error: pref needs a key")
                         "ui" -> onMain { Elements.list() }
@@ -170,7 +174,7 @@ object Volition {
         return destination.go(argument)
     }
 
-    private suspend fun state(): String {
+    private suspend fun stateJson(): JSONObject {
         val json = JSONObject()
         val activity = currentActivity
         json.put("activity", activity?.javaClass?.simpleName ?: "none")
@@ -191,7 +195,7 @@ object Volition {
             // than filling every answer with nulls.
             if (value != null) json.put(name, value.toJson())
         }
-        return json.toString()
+        return json
     }
 
     /**
@@ -241,6 +245,7 @@ object Volition {
         "help          what this app answers",
         "destinations  where it can be told to go",
         "where         what is on screen, and whether it is ready to be driven",
+        "check <cond>  whether where says so: screen=MangaScreen, reader.page>3, stack~Settings",
         "go <name>     open a destination, from wherever the app is",
         "pref <key>    read a preference, or write one with <key>=<value>",
         "ui            every button, field, switch and line of text on screen",
