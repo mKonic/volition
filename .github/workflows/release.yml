@@ -1,0 +1,102 @@
+name: Release
+
+# Releasing is tagging: a semver tag (v1.2.3, v1.2.3-rc.1, ...) builds the AAR and publishes it, with
+# the ivy descriptor consumers resolve it through, as that tag's release. The filter only narrows to
+# v*; the check below holds the tag to the full semver grammar.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check the tag is the version
+        run: |
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          [[ "$TAG" =~ $semver ]] || { echo "$TAG is not a semver tag"; exit 1; }
+          name=$(bash scripts/version.sh name)
+          [ "$name" = "$TAG" ] || { echo "scripts/version.sh reports $name, not $TAG"; exit 1; }
+          echo "Releasing $TAG, build $(bash scripts/version.sh code)"
+
+      - name: Build
+        run: ./gradlew :library:assembleRelease :library:writeIvyDescriptor
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${TAG#v}
+          mkdir -p dist
+          cp library/build/outputs/aar/library-release.aar "dist/volition-$version.aar"
+          cp "library/build/outputs/ivy/ivy-$version.xml" dist/
+
+          previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$TAG^" 2> /dev/null || true)
+          git log --format='- %s' "${previous:+$previous..}$TAG" > notes.md
+
+          # A semver pre-release (a -suffix ahead of any +build) is published as one.
+          prerelease=()
+          case "${TAG%%+*}" in *-*) prerelease=(--prerelease) ;; esac
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" "${prerelease[@]}" --title "$TAG" --notes-file notes.md dist/*
+          fi
+
+      # The README shows the coordinate a consumer copies, so its version is part of the release rather
+      # than something to remember by hand. A pre-release is skipped: the README should name the version
+      # to reach for, which is the last full one.
+      - name: Point the README at this release
+        if: ${{ !contains(env.TAG, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          default=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+          git fetch origin "$default"
+
+          if ! git merge-base --is-ancestor "$TAG" "origin/$default"; then
+            echo "$TAG is not on $default, leaving the README alone"
+            exit 0
+          fi
+
+          git checkout -B "$default" "origin/$default"
+          version=${TAG#v}
+          sed -i -E "s|(dev\\.mkonic:volition:)[0-9A-Za-z.+-]+|\\1$version|g" README.md
+
+          if git diff --quiet README.md; then
+            echo "README already names $version"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -m "docs: readme points at $version" README.md
+          git push origin "$default"

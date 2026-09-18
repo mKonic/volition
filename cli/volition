@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Drives an app that carries Volition, by name rather than by tapping coordinates read off a screenshot.
+#
+#   volition where                    what is on screen right now
+#   volition list                     every destination the app knows
+#   volition go settings_webgpu       open a destination, from wherever the app is
+#   volition go manga:42              one that takes an argument
+#   volition back | home              up one screen, or back to the root
+#   volition pref <key>               read a preference from the running app
+#   volition pref <key>=<value>       write one, live - no restart, no root
+#   volition shot [file]              screenshot (default: volition.png)
+#   volition help                     what this app answers, its own commands included
+#
+# Anything else is passed to the app, so a command the app registered itself works the same way:
+#
+#   volition seed library
+#
+# The package comes from -p/--package, $VOLITION_PACKAGE, or a .volition file in the working directory.
+# The device comes from -s/--serial or $ANDROID_SERIAL, as adb reads it.
+set -uo pipefail
+
+PACKAGE="${VOLITION_PACKAGE:-}"
+LAUNCH=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -p|--package) PACKAGE="$2"; shift 2 ;;
+        -s|--serial) export ANDROID_SERIAL="$2"; shift 2 ;;
+        --launch) LAUNCH="$2"; shift 2 ;;
+        --) shift; break ;;
+        *) break ;;
+    esac
+done
+
+if [ -z "$PACKAGE" ] && [ -f .volition ]; then
+    PACKAGE=$(grep -v '^[[:space:]]*#' .volition | head -1 | tr -d '[:space:]')
+fi
+if [ -z "$PACKAGE" ]; then
+    echo "which app? pass -p <applicationId>, set VOLITION_PACKAGE, or write it in a .volition file" >&2
+    exit 2
+fi
+
+# `content call` prints `Result: Bundle[{result=...}]`; the app's own answer is what is wanted.
+bridge() {
+    local method="$1" arg="${2:-}" out
+    if [ -n "$arg" ]; then
+        out=$(adb shell content call --uri "content://$PACKAGE.volition" --method "$method" --arg "$arg" 2>&1)
+    else
+        out=$(adb shell content call --uri "content://$PACKAGE.volition" --method "$method" 2>&1)
+    fi
+    case "$out" in
+        *"Result: Bundle"*)
+            printf '%s\n' "$out" | sed -e 's/.*result=//' -e 's/}]$//' -e 's/[[:space:]]*$//'
+            ;;
+        *"Result: null"*)
+            echo "$PACKAGE answered nothing - is this a build with Volition in it?" >&2
+            return 1
+            ;;
+        *)
+            printf '%s\n' "$out" >&2
+            return 1
+            ;;
+    esac
+}
+
+# A provider call wakes the process on its own, with no activity and - for that first moment - none of the app's own
+# setup. "Is the process alive" is the wrong question; wait until the app says it is ready.
+ensure_ready() {
+    local started=false out launch="$LAUNCH"
+    [ -n "$launch" ] || launch=$(adb shell cmd package resolve-activity --brief "$PACKAGE" 2>/dev/null | tail -1 | tr -d '\r')
+    for _ in $(seq 1 40); do
+        out=$(bridge where 2>/dev/null)
+        case "$out" in
+            *'"ready":true'*) return 0 ;;
+            error:*) printf '%s\n' "$out" >&2; return 1 ;;
+        esac
+        if [ "$started" = false ]; then
+            case "$launch" in
+                */*) adb shell am start -n "$launch" > /dev/null 2>&1 ;;
+                *)
+                    echo "cannot tell which activity starts $PACKAGE - pass --launch <package>/<activity>" >&2
+                    return 1
+                    ;;
+            esac
+            started=true
+        fi
+        sleep 0.5
+    done
+    echo "$PACKAGE never came up - is it installed, and does this build carry Volition?" >&2
+    return 1
+}
+
+cmd="${1:-where}"
+shift || true
+
+case "$cmd" in
+    where|state) ensure_ready && bridge where ;;
+    list|destinations) ensure_ready && bridge destinations ;;
+    help) ensure_ready && bridge help ;;
+    go) [ $# -ge 1 ] || { echo "go needs a destination - try: $0 list" >&2; exit 2; }
+        ensure_ready && bridge go "$1" ;;
+    back|home) ensure_ready && bridge go "$cmd" ;;
+    pref) [ $# -ge 1 ] || { echo "pref needs a key" >&2; exit 2; }
+        ensure_ready && bridge pref "$1" ;;
+    shot)
+        file="${1:-volition.png}"
+        adb exec-out screencap -p > "$file" && echo "$file"
+        ;;
+    -h|--help|"") sed -n '2,20p' "$0" ;;
+    *) ensure_ready && bridge "$cmd" "${1:-}" ;;
+esac

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+
+        <!--
+            Comes with the artifact, so an app adding Volition as debugImplementation declares nothing. Exported
+            because the shell user is the one calling it; Volition itself refuses to answer on a build that is not
+            debuggable unless the app opts in.
+        -->
+        <provider
+            android:name="dev.mkonic.volition.VolitionProvider"
+            android:authorities="${applicationId}.volition"
+            android:exported="true"
+            tools:ignore="ExportedContentProvider" />
+
+    </application>
+
+</manifest>
