@@ -297,8 +297,24 @@ internal object Elements {
             flags = flags,
             bounds = visible,
             enabled = view.isEnabled,
-            click = if (view.isClickable) view::performClick else null,
-            longClick = if (view.isLongClickable) view::performLongClick else null,
+            // What performClick returns is only whether a click listener ran: a switch toggles itself and still
+            // answers false, a row handled in onTouchEvent the same. The click landed either way.
+            click = if (view.isClickable) {
+                {
+                    view.performClick()
+                    true
+                }
+            } else {
+                null
+            },
+            longClick = if (view.isLongClickable) {
+                {
+                    view.performLongClick()
+                    true
+                }
+            } else {
+                null
+            },
             setText = field?.let { edit ->
                 { value: String ->
                     edit.setText(value)
