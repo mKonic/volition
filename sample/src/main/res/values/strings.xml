@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home">Home</string>
+    <string name="details">Details</string>
+    <string name="your_name">Your name</string>
+    <string name="greet">Greet</string>
+    <string name="greeting">Hello, %1$s</string>
+    <string name="notifications">Notifications</string>
+    <string name="notifications_on">Notifications on</string>
+    <string name="notifications_off">Notifications off</string>
+    <string name="ask">Ask something</string>
+    <string name="sure">Are you sure?</string>
+    <string name="yes">Yes</string>
+    <string name="no">No</string>
+    <string name="answered">Answered yes</string>
+    <string name="open_details">Open details</string>
+    <string name="count_up">Count up</string>
+    <string name="counted">Counted %1$d</string>
+</resources>

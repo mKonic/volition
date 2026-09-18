@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/graph"
+    app:startDestination="@id/home">
+
+    <fragment
+        android:id="@+id/home"
+        android:name="dev.mkonic.volition.sample.HomeFragment"
+        android:label="home"
+        app:route="home" />
+
+    <fragment
+        android:id="@+id/details"
+        android:name="dev.mkonic.volition.sample.DetailsFragment"
+        android:label="details"
+        app:route="details" />
+
+</navigation>

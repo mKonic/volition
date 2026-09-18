@@ -26,3 +26,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "volition"
 include(":library")
+include(":sample")
