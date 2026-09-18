@@ -194,7 +194,9 @@ object Volition {
             } catch (e: Exception) {
                 "error: ${e::class.simpleName}: ${e.message}"
             }
-            json.put(name, value.toJson())
+            // A provider with nothing to say - the reader's state while no reader is open - says nothing rather
+            // than filling every answer with nulls.
+            if (value != null) json.put(name, value.toJson())
         }
         return json.toString()
     }
