@@ -3,6 +3,7 @@ agp = "9.4.0"
 kotlin = "2.4.20"
 
 [plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 
@@ -12,4 +13,9 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 # Compiled against an older Compose than any app will run: Compose keeps old binaries working on newer releases,
 # not the other way round.
 compose-ui = { module = "androidx.compose.ui:ui", version = "1.7.8" }
+navigation-runtime = { module = "androidx.navigation:navigation-runtime", version = "2.9.5" }
 voyager-navigator = { module = "cafe.adriel.voyager:voyager-navigator", version = "2.2.21-1.10.3" }
+
+# The sample app, which is where the Navigation adapter is driven for real.
+appcompat = { module = "androidx.appcompat:appcompat", version = "1.7.1" }
+navigation-fragment = { module = "androidx.navigation:navigation-fragment", version = "2.9.5" }

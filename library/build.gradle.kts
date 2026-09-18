@@ -52,6 +52,7 @@ dependencies {
     compileOnly(libs.voyager.navigator)
     // Read through the semantics tree when the app has Compose; an app without it never loads that code.
     compileOnly(libs.compose.ui)
+    compileOnly(libs.navigation.runtime)
 }
 
 /**
