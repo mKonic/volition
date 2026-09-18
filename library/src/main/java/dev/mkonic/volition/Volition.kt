@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
+import android.view.View
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -170,6 +171,22 @@ object Volition {
         // A provider call starts the process on its own, so an app can answer before it has an activity or its
         // dependency graph. A caller that is about to drive it waits for this.
         json.put("ready", activity != null)
+        // Which field typed text would land in - the one thing a caller cannot see from outside without
+        // guessing, and the thing that decides whether `volition text` does anything.
+        withContext(Dispatchers.Main) { activity?.currentFocus }?.let { focused ->
+            json.put(
+                "focused",
+                buildString {
+                    append(focused.javaClass.simpleName)
+                    val id = focused.id
+                    if (id != View.NO_ID) {
+                        runCatching { focused.resources.getResourceEntryName(id) }.getOrNull()?.let {
+                            append('/').append(it)
+                        }
+                    }
+                },
+            )
+        }
         val providers = synchronized(this) { stateProviders.toMap() }
         for ((name, provide) in providers) {
             val value = try {

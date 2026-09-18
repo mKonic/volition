@@ -11,6 +11,14 @@
 #   volition shot [file]              screenshot (default: volition.png)
 #   volition help                     what this app answers, its own commands included
 #
+# The app cannot do these for you, so they go through adb as they always did - `where` reports what is
+# focused, which is where typed text lands:
+#
+#   volition text "a query"           type into whatever has focus
+#   volition key back | 66 | enter    a key by name or keycode
+#   volition tap <x> <y>              a tap at a coordinate
+#   volition swipe <x1> <y1> <x2> <y2> [ms]
+#
 # Anything else is passed to the app, so a command the app registered itself works the same way:
 #
 #   volition seed library
@@ -106,6 +114,26 @@ case "$cmd" in
         file="${1:-volition.png}"
         adb exec-out screencap -p > "$file" && echo "$file"
         ;;
-    -h|--help|"") sed -n '2,20p' "$0" ;;
+    text)
+        [ $# -ge 1 ] || { echo "text needs something to type" >&2; exit 2; }
+        # `input text` takes no spaces; %s is how it spells one.
+        adb shell input text "$(printf '%s' "$*" | sed -e 's/ /%s/g')"
+        ;;
+    key)
+        [ $# -ge 1 ] || { echo "key needs a keycode or name - back, enter, volume_up, 66" >&2; exit 2; }
+        case "$1" in
+            [0-9]*) adb shell input keyevent "$1" ;;
+            *) adb shell input keyevent "KEYCODE_$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')" ;;
+        esac
+        ;;
+    tap)
+        [ $# -ge 2 ] || { echo "tap needs <x> <y>" >&2; exit 2; }
+        adb shell input tap "$1" "$2"
+        ;;
+    swipe)
+        [ $# -ge 4 ] || { echo "swipe needs <x1> <y1> <x2> <y2> [ms]" >&2; exit 2; }
+        adb shell input swipe "$1" "$2" "$3" "$4" "${5:-200}"
+        ;;
+    -h|--help|"") sed -n '2,29p' "$0" ;;
     *) ensure_ready && bridge "$cmd" "${1:-}" ;;
 esac

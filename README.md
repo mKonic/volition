@@ -92,6 +92,24 @@ Fragments, Compose Navigation, plain Activities and anything else.
 
 Anything else is passed to the app, so `volition seed library` reaches a `command("seed")` it registered.
 
+## Typing, keys and taps
+
+Text, keys and gestures are the one part an app cannot answer for you, so they go through adb as they always did:
+
+| | |
+| --- | --- |
+| `volition text "a query"` | type into whatever has focus |
+| `volition key back` | a key by name or keycode |
+| `volition tap <x> <y>` | a tap at a coordinate |
+| `volition swipe <x1> <y1> <x2> <y2> [ms]` | a drag |
+
+`where` reports what currently has focus, which is where typed text lands - the thing that otherwise has to be
+guessed from a screenshot.
+
+Prefer a `command` for anything a script repeats: the app setting its own search query is a line of code, while
+focusing the right box and typing into it is a screenshot, a tap and a hope. Keep taps for what only the UI can
+answer, such as proving a button really is reachable.
+
 The package comes from `-p`, `$VOLITION_PACKAGE`, or a `.volition` file in the working directory; the device from
 `-s` or `$ANDROID_SERIAL`.
 
@@ -121,8 +139,7 @@ ability to navigate that build and read and write its preferences.
 
 ## Building
 
-`./gradlew :library:assembleRelease`. Releasing is tagging: a semver tag builds the AAR and publishes it, with the
-ivy descriptor consumers resolve through, as that tag's release.
+`./gradlew :library:assembleRelease`.
 
 ## License
 
