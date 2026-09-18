@@ -57,7 +57,7 @@ dependencies {
  * repository, so the dependencies travel beside the AAR. Lists this build's direct runtime
  * dependencies at the versions it resolved.
  */
-val writeIvyDescriptor by tasks.registering {
+val writeIvyDescriptor = tasks.register("writeIvyDescriptor") {
     val runtime = configurations.named("releaseRuntimeClasspath")
         .flatMap { it.incoming.resolutionResult.rootComponent }
     val descriptor = layout.buildDirectory.file("outputs/ivy/ivy-$artifactVersion.xml")
