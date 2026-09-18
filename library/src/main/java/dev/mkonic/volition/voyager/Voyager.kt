@@ -1,5 +1,6 @@
 package dev.mkonic.volition.voyager
 
+import android.app.Activity
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.Navigator
 import dev.mkonic.volition.Volition
@@ -24,14 +25,23 @@ import kotlinx.coroutines.withContext
  *
  * This file is the only part of Volition that touches Voyager, and it is only loaded by an app that calls [voyager].
  */
-fun VolitionSpec.voyager(navigator: () -> Navigator?) {
+fun VolitionSpec.voyager(host: Class<out Activity>? = null, navigator: () -> Navigator?) {
     navigatorLookup = navigator
+    hostActivity = host
 
     state("screen") { onMain { navigator()?.lastItem?.let { it::class.simpleName } } }
     state("stack") { onMain { navigator()?.items?.map { it::class.simpleName } } }
 
     destination("back", description = "up one screen, or close the activity when there is none") {
         onMain {
+            // Another activity on top of the one holding the stack - a reader, a viewer, a web view - is what back
+            // means right now; popping the stack underneath it would move a screen nobody is looking at.
+            val onTop = Volition.currentActivity
+            val host = hostActivity
+            if (host != null && onTop != null && !host.isInstance(onTop)) {
+                onTop.finish()
+                return@onMain "ok: closed ${onTop.javaClass.simpleName}"
+            }
             val stack = navigator() ?: return@onMain "error: no screen stack"
             if (stack.canPop) {
                 stack.pop()
@@ -87,5 +97,9 @@ fun VolitionSpec.screen(
 /** Where [screen] finds the navigator, set by [voyager]. */
 @Volatile
 private var navigatorLookup: (() -> Navigator?)? = null
+
+/** The activity the stack belongs to, so back can tell it from one sitting on top of it. */
+@Volatile
+private var hostActivity: Class<out Activity>? = null
 
 private suspend fun <T> onMain(block: () -> T): T = withContext(Dispatchers.Main) { block() }
