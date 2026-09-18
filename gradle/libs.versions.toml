@@ -9,4 +9,7 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 [libraries]
 androidx-annotation = { module = "androidx.annotation:annotation", version = "1.10.0" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version = "1.11.0" }
+# Compiled against an older Compose than any app will run: Compose keeps old binaries working on newer releases,
+# not the other way round.
+compose-ui = { module = "androidx.compose.ui:ui", version = "1.7.8" }
 voyager-navigator = { module = "cafe.adriel.voyager:voyager-navigator", version = "2.2.21-1.10.3" }

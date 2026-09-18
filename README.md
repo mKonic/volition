@@ -16,13 +16,15 @@ $ volition go settings_webgpu
 ok: SettingsWebGpuScreen
 $ volition where
 {"activity":"MainActivity","ready":true,"screen":"SettingsWebGpuScreen","stack":["HomeScreen","SettingsWebGpuScreen"]}
-$ volition pref high_quality_renderer=false
-ok: high_quality_renderer=false
+$ volition click "Use high quality renderer"
+ok: clicked switch "Use high quality renderer"
+$ volition pref high_quality_renderer
+high_quality_renderer=false
 ```
 
 For debugging and development of an app you build: Volition is compiled into it, so it knows the screens by name, the
-shape of the stack and whatever state the app chooses to publish. Tools that drive from outside - an accessibility
-tree, taps at coordinates - work on any app but know none of this.
+shape of the stack, every button and field on screen by what it says, and whatever state the app chooses to publish.
+Tools that drive from outside - taps at coordinates read off a screenshot - work on any app but know none of this.
 
 ## Use
 
@@ -57,7 +59,7 @@ Once, where the app starts - `Application.onCreate`, or wherever the navigator b
 
 ```kotlin
 Volition.register {
-    voyager { navigatorOrNull }                                  // Voyager apps: stack, back, home
+    voyager(MainActivity::class.java) { navigatorOrNull }        // Voyager apps: stack, back, home
     screen("settings_webgpu", "webgpu") { SettingsWebGpuScreen }
     screen("manga", takesArgument = true) { id -> MangaScreen(id.toLong()) }
     destination("library") { openTab(Tab.Library()); "ok: library" }
@@ -66,6 +68,8 @@ Volition.register {
 }
 ```
 
+- `voyager` takes the activity that holds the stack, so `back` closes another activity sitting on top of it - a
+  reader, a viewer - instead of popping a screen nobody is looking at.
 - `screen` takes a Voyager `Screen`; `popFirst = true` clears the stack first, which is what a destination sitting
   under everything else (a tab) wants.
 - `destination` is the general form - any suspending lambda that returns what the caller should see. Use it for
@@ -92,23 +96,54 @@ Fragments, Compose Navigation, plain Activities and anything else.
 
 Anything else is passed to the app, so `volition seed library` reaches a `command("seed")` it registered.
 
-## Typing, keys and taps
+## What is on screen
 
-Text, keys and gestures are the one part an app cannot answer for you, so they go through adb as they always did:
+`volition ui` lists what the app is showing, read from its own views and Compose semantics:
+
+```
+$ volition ui
+text      "Library"  @160,210
+button    "Search"  @813,211
+tab       "Default · 4"  selected  @161,393
+switch    "Use high quality renderer · Draw pages with the GPU."  on  @608,490
+slider    (unlabeled) = "4"  0..4  @608,1050
+```
+
+Anything listed can be acted on by what it says:
 
 | | |
 | --- | --- |
-| `volition text "a query"` | type into whatever has focus |
+| `volition click Retry` | run its click, with no touch involved; `longclick` for a long press |
+| `volition fill Search "one piece"` | set a field's text, or a slider's value; `""` names the focused field |
+| `volition submit Search` | the field's keyboard action - search, go, done |
+| `volition tap Retry` | a real touch at the element's own position, for when the touch path is what is being tested |
+| `volition wait "Chapter 1" [s]` | until it is on screen, 10 seconds unless told |
+| `volition find Retry` | what a name picks |
+
+A name matches what an element says, its content description, test tag or view id - whole first, then as part of
+it - and failing those, its kind: `fill slider 8`, `click switch#2`. When a name picks several, the answer lists them
+and `Retry#2` takes the second, counted top to bottom. The window on top is asked first, so an open dialog's `Cancel`
+wins over one behind it. A disabled element refuses.
+
+Compose is read from the merged semantics tree, the one screen readers use, so what Volition can name is what
+TalkBack can read. A row that shows a switch but carries no toggle state in its semantics reads as a plain
+`clickable` here, as it does to a screen reader, and the fix is the same one.
+
+Every failure exits non-zero, so a script can stop on it.
+
+### Without a name
+
+| | |
+| --- | --- |
+| `volition text "a query"` | type through the keyboard into whatever has focus |
 | `volition key back` | a key by name or keycode |
 | `volition tap <x> <y>` | a tap at a coordinate |
 | `volition swipe <x1> <y1> <x2> <y2> [ms]` | a drag |
 
-`where` reports what currently has focus, which is where typed text lands - the thing that otherwise has to be
-guessed from a screenshot.
+`where` names the focused field, which is where typed text lands.
 
-Prefer a `command` for anything a script repeats: the app setting its own search query is a line of code, while
-focusing the right box and typing into it is a screenshot, a tap and a hope. Keep taps for what only the UI can
-answer, such as proving a button really is reachable.
+A `command` is still the better tool for setup a script repeats - seeding data, resetting state - since it skips the
+UI entirely.
 
 The package comes from `-p`, `$VOLITION_PACKAGE`, or a `.volition` file in the working directory; the device from
 `-s` or `$ANDROID_SERIAL`.

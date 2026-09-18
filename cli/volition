@@ -8,16 +8,28 @@
 #   volition back | home              up one screen, or back to the root
 #   volition pref <key>               read a preference from the running app
 #   volition pref <key>=<value>       write one, live - no restart, no root
-#   volition shot [file]              screenshot (default: volition.png)
 #   volition help                     what this app answers, its own commands included
 #
-# The app cannot do these for you, so they go through adb as they always did - `where` reports what is
-# focused, which is where typed text lands:
+# What is on screen, by what it says:
 #
-#   volition text "a query"           type into whatever has focus
+#   volition ui                       every button, field, switch and line of text, with where it sits
+#   volition click Retry              run its click, no touch involved; longclick for a long press
+#   volition fill Search "one piece"  set a field's text - "" as the name means the focused field
+#   volition submit Search            the field's keyboard action - search, go, done
+#   volition tap Retry                a real touch, at the element's own position
+#   volition wait "Chapter 1" [s]     until it is on screen (10 seconds unless told)
+#   volition find Retry               what a name picks; every match, numbered, when there are several
+#
+# A name is matched against what an element says, its description, test tag or view id - whole first, then
+# as a part. When several match, the answer lists them and Retry#2 picks the second, top to bottom.
+#
+# Straight through adb, for what has no name:
+#
+#   volition text "a query"           type through the keyboard into whatever has focus
 #   volition key back | 66 | enter    a key by name or keycode
 #   volition tap <x> <y>              a tap at a coordinate
 #   volition swipe <x1> <y1> <x2> <y2> [ms]
+#   volition shot [file]              screenshot (default: volition.png)
 #
 # Anything else is passed to the app, so a command the app registered itself works the same way:
 #
@@ -48,17 +60,27 @@ if [ -z "$PACKAGE" ]; then
     exit 2
 fi
 
-# `content call` prints `Result: Bundle[{result=...}]`; the app's own answer is what is wanted.
+# adb hands its arguments to the device's shell as one line, which would split a name at its spaces.
+quote() {
+    printf "'%s'" "${1//\'/\'\\\'\'}"
+}
+
+# `content call` prints `Result: Bundle[{result=...}]`; the app's own answer is what is wanted. An answer that starts
+# with `error:` fails the command, so a script can stop on it.
 bridge() {
-    local method="$1" arg="${2:-}" out
+    local method="$1" arg="${2:-}" out result
     if [ -n "$arg" ]; then
-        out=$(adb shell content call --uri "content://$PACKAGE.volition" --method "$method" --arg "$arg" 2>&1)
+        out=$(adb shell content call --uri "content://$PACKAGE.volition" --method "$method" --arg "$(quote "$arg")" 2>&1)
     else
         out=$(adb shell content call --uri "content://$PACKAGE.volition" --method "$method" 2>&1)
     fi
     case "$out" in
         *"Result: Bundle"*)
-            printf '%s\n' "$out" | sed -e 's/.*result=//' -e 's/}]$//' -e 's/[[:space:]]*$//'
+            result=$(printf '%s\n' "$out" | sed -e 's/.*result=//' -e 's/}]$//' -e 's/[[:space:]]*$//')
+            case "$result" in
+                error:*) printf '%s\n' "$result" >&2; return 1 ;;
+            esac
+            printf '%s\n' "$result"
             ;;
         *"Result: null"*)
             echo "$PACKAGE answered nothing - is this a build with Volition in it?" >&2
@@ -77,7 +99,7 @@ ensure_ready() {
     local started=false out launch="$LAUNCH"
     [ -n "$launch" ] || launch=$(adb shell cmd package resolve-activity --brief "$PACKAGE" 2>/dev/null | tail -1 | tr -d '\r')
     for _ in $(seq 1 40); do
-        out=$(bridge where 2>/dev/null)
+        out=$(bridge where 2>&1)
         case "$out" in
             *'"ready":true'*) return 0 ;;
             error:*) printf '%s\n' "$out" >&2; return 1 ;;
@@ -110,6 +132,32 @@ case "$cmd" in
     back|home) ensure_ready && bridge go "$cmd" ;;
     pref) [ $# -ge 1 ] || { echo "pref needs a key" >&2; exit 2; }
         ensure_ready && bridge pref "$1" ;;
+    ui) ensure_ready && bridge ui ;;
+    find)
+        [ $# -ge 1 ] || { echo "find needs a name - try: $0 ui" >&2; exit 2; }
+        ensure_ready && bridge find "$1"
+        ;;
+    click|longclick|submit)
+        [ $# -ge 1 ] || [ "$cmd" = submit ] || { echo "$cmd needs a name - try: $0 ui" >&2; exit 2; }
+        ensure_ready && bridge "$cmd" "${1:-}"
+        ;;
+    fill)
+        [ $# -ge 2 ] || { echo "fill needs a field and the text for it - \"\" names the focused field" >&2; exit 2; }
+        ensure_ready && bridge fill "$1"$'\x1f'"$2"
+        ;;
+    wait)
+        [ $# -ge 1 ] || { echo "wait needs a name, and optionally how many seconds" >&2; exit 2; }
+        ensure_ready || exit 1
+        deadline=$((SECONDS + ${2:-10}))
+        until found=$(bridge find "$1" 2>/dev/null); do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "error: nothing called '$1' came up in ${2:-10}s" >&2
+                exit 1
+            fi
+            sleep 0.3
+        done
+        printf '%s\n' "$found"
+        ;;
     shot)
         file="${1:-volition.png}"
         adb exec-out screencap -p > "$file" && echo "$file"
@@ -117,7 +165,7 @@ case "$cmd" in
     text)
         [ $# -ge 1 ] || { echo "text needs something to type" >&2; exit 2; }
         # `input text` takes no spaces; %s is how it spells one.
-        adb shell input text "$(printf '%s' "$*" | sed -e 's/ /%s/g')"
+        adb shell input text "$(quote "$(printf '%s' "$*" | sed -e 's/ /%s/g')")"
         ;;
     key)
         [ $# -ge 1 ] || { echo "key needs a keycode or name - back, enter, volume_up, 66" >&2; exit 2; }
@@ -127,13 +175,27 @@ case "$cmd" in
         esac
         ;;
     tap)
-        [ $# -ge 2 ] || { echo "tap needs <x> <y>" >&2; exit 2; }
-        adb shell input tap "$1" "$2"
+        [ $# -ge 1 ] || { echo "tap needs a name, or <x> <y>" >&2; exit 2; }
+        if [ $# -ge 2 ] && [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ ]]; then
+            adb shell input tap "$1" "$2"
+            exit
+        fi
+        # The app says where the element is; the touch itself goes through the real input path, which is the
+        # point of tapping rather than clicking.
+        ensure_ready || exit 1
+        found=$(bridge find "$1") || exit 1
+        if [ "$(printf '%s\n' "$found" | wc -l)" -gt 1 ]; then
+            { echo "error: several match '$1' - say which:"; printf '  %s\n' "$found"; } >&2
+            exit 1
+        fi
+        spot=$(printf '%s\n' "$found" | sed -n 's/.*@\([0-9]*\),\([0-9]*\)$/\1 \2/p')
+        [ -n "$spot" ] || { echo "error: '$1' has no position: $found" >&2; exit 1; }
+        adb shell input tap $spot && echo "ok: tapped $(printf '%s' "$found" | tr -s ' ')"
         ;;
     swipe)
         [ $# -ge 4 ] || { echo "swipe needs <x1> <y1> <x2> <y2> [ms]" >&2; exit 2; }
         adb shell input swipe "$1" "$2" "$3" "$4" "${5:-200}"
         ;;
-    -h|--help|"") sed -n '2,29p' "$0" ;;
+    -h|--help|"") awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" ;;
     *) ensure_ready && bridge "$cmd" "${1:-}" ;;
 esac

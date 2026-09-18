@@ -5,7 +5,7 @@ import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
-import android.view.View
+import dev.mkonic.volition.ui.Elements
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -128,6 +128,12 @@ object Volition {
                         "where", "state" -> state()
                         "go" -> go(argument ?: return@withTimeout "error: go needs a destination")
                         "pref" -> pref(context, argument ?: return@withTimeout "error: pref needs a key")
+                        "ui" -> onMain { Elements.list() }
+                        "find" -> onMain { Elements.find(argument.orEmpty()) }
+                        "click" -> onMain { Elements.click(argument.orEmpty(), long = false) }
+                        "longclick" -> onMain { Elements.click(argument.orEmpty(), long = true) }
+                        "fill" -> onMain { Elements.fill(argument.orEmpty()) }
+                        "submit" -> onMain { Elements.submit(argument.orEmpty()) }
                         else -> synchronized(this@Volition) { commands[method] }?.invoke(argument)
                             ?: "error: no command '$method' - try help"
                     }
@@ -173,20 +179,7 @@ object Volition {
         json.put("ready", activity != null)
         // Which field typed text would land in - the one thing a caller cannot see from outside without
         // guessing, and the thing that decides whether `volition text` does anything.
-        withContext(Dispatchers.Main) { activity?.currentFocus }?.let { focused ->
-            json.put(
-                "focused",
-                buildString {
-                    append(focused.javaClass.simpleName)
-                    val id = focused.id
-                    if (id != View.NO_ID) {
-                        runCatching { focused.resources.getResourceEntryName(id) }.getOrNull()?.let {
-                            append('/').append(it)
-                        }
-                    }
-                },
-            )
-        }
+        if (activity != null) onMain { Elements.focused() }?.let { json.put("focused", it.summary()) }
         val providers = synchronized(this) { stateProviders.toMap() }
         for ((name, provide) in providers) {
             val value = try {
@@ -234,6 +227,8 @@ object Volition {
 
     private fun notA(value: String, kind: String) = "error: '$value' is not a $kind"
 
+    private suspend fun <T> onMain(block: () -> T): T = withContext(Dispatchers.Main) { block() }
+
     private fun Any?.toJson(): Any = when (this) {
         null -> JSONObject.NULL
         is Map<*, *> -> JSONObject().also { json -> forEach { (k, v) -> json.put(k.toString(), v.toJson()) } }
@@ -248,5 +243,10 @@ object Volition {
         "where         what is on screen, and whether it is ready to be driven",
         "go <name>     open a destination, from wherever the app is",
         "pref <key>    read a preference, or write one with <key>=<value>",
+        "ui            every button, field, switch and line of text on screen",
+        "find <name>   the element a name picks, and where it is",
+        "click <name>  click it - longclick for a long press",
+        "fill <name>   set a field's text: <name>, a unit separator (0x1f), then the text",
+        "submit <name> run a field's keyboard action - search, go, done",
     )
 }

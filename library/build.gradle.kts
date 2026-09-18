@@ -50,6 +50,8 @@ dependencies {
     // The adapter in dev.mkonic.volition.voyager is only loaded by an app that already has Voyager,
     // so it travels in the same artifact without being a dependency of it.
     compileOnly(libs.voyager.navigator)
+    // Read through the semantics tree when the app has Compose; an app without it never loads that code.
+    compileOnly(libs.compose.ui)
 }
 
 /**
