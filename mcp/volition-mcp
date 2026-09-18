@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Volition over MCP: the app's own map as tools, for an agent that would otherwise read a screenshot.
+
+Speaks stdio JSON-RPC and shells out to `cli/volition`, so it answers exactly what the terminal does.
+
+    volition-mcp [-p <applicationId>] [-s <serial>] [--launch <package>/<activity>]
+
+The package can also come from $VOLITION_PACKAGE, from a `.volition` file in the working directory the
+server was started in, or per call, which is what a session driving two apps wants.
+"""
+
+import base64
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CLI = os.path.join(os.path.dirname(HERE), "cli", "volition")
+PROTOCOL = "2025-06-18"
+
+
+def version():
+    """scripts/version.sh is the only version source, here as everywhere else."""
+    script = os.path.join(os.path.dirname(HERE), "scripts", "version.sh")
+    try:
+        done = subprocess.run(["bash", script, "name"], capture_output=True, text=True, timeout=10)
+        return done.stdout.strip().lstrip("v") or "unknown"
+    except Exception:  # noqa: BLE001 - a server that cannot name itself still works
+        return "unknown"
+
+# name -> (arguments, what it runs, description). An argument named in `takes` becomes a string property of
+# the tool's schema, required unless it ends with "?".
+TOOLS = [
+    (
+        "where",
+        [],
+        "What the app is showing: its activity, its screen stack, the focused field and whatever state it "
+        "publishes, as JSON. Ask this before driving it.",
+    ),
+    (
+        "ui",
+        [],
+        "Every button, field, switch, slider and line of text on screen, with its state and the coordinate of "
+        "its middle. Read from the app's own views and Compose semantics, not from a screenshot.",
+    ),
+    ("destinations", [], "Every place the app can be told to go, with the aliases each answers to."),
+    ("go", ["destination"], "Open a destination by name, from wherever the app is. 'manga:42' passes an argument."),
+    ("back", [], "Up one screen, or close the activity when there is none."),
+    ("home", [], "Back to the root of the screen stack."),
+    ("find", ["name"], "Which element a name picks, as 'ui' shows it; every match, numbered, when several fit."),
+    ("click", ["name"], "Click an element by what it says. Runs its own click, with no touch involved."),
+    ("longclick", ["name"], "Long-press an element by what it says."),
+    ("fill", ["name", "text"], "Set a field's text, or a slider's value. An empty name means the focused field."),
+    ("submit", ["name?"], "Run a field's keyboard action - search, go, done. Empty name means the focused field."),
+    (
+        "tap",
+        ["name"],
+        "A real touch at an element's own position, for when the touch path itself is what is being tested. "
+        "Two numbers instead of a name tap that coordinate.",
+    ),
+    ("swipe", ["from_x", "from_y", "to_x", "to_y", "ms?"], "A drag between two coordinates."),
+    ("type_text", ["text"], "Type through the keyboard into whatever has focus."),
+    ("key", ["key"], "Send a key by name or keycode - back, enter, volume_up, 66."),
+    (
+        "check",
+        ["condition"],
+        "Whether what 'where' says is so, right now: screen=MangaScreen, reader.page>3, stack~Settings.",
+    ),
+    (
+        "wait",
+        ["target", "seconds?"],
+        "Wait until an element is on screen, or until a condition on 'where' holds. Use this instead of sleeping.",
+    ),
+    ("pref", ["key", "value?"], "Read a preference from the running app, or write one live - no restart, no root."),
+    ("run", ["command", "argument?"], "Run a command the app registered itself. 'help' lists them."),
+    ("help", [], "What this app answers, its own commands included."),
+    ("screenshot", [], "A picture of the screen, for when what matters is how it looks rather than what it says."),
+]
+
+
+def command_line(name, arguments):
+    """The volition command line a tool call becomes, for the tools that are not a plain pass-through."""
+    if name == "type_text":
+        return ["text", arguments["text"]]
+    if name == "run":
+        return [arguments["command"]] + ([arguments["argument"]] if arguments.get("argument") else [])
+    if name == "swipe":
+        line = ["swipe", arguments["from_x"], arguments["from_y"], arguments["to_x"], arguments["to_y"]]
+        return [str(part) for part in line + ([arguments["ms"]] if arguments.get("ms") else [])]
+    if name == "pref":
+        value = arguments.get("value")
+        return ["pref", f"{arguments['key']}={value}" if value not in (None, "") else arguments["key"]]
+    if name == "fill":
+        return ["fill", arguments.get("name", ""), arguments["text"]]
+    if name == "tap":
+        # A coordinate given as "540 1200" is two arguments, not the name of something on screen.
+        spot = str(arguments["name"]).split()
+        return ["tap"] + spot if len(spot) == 2 and all(part.isdigit() for part in spot) else ["tap", arguments["name"]]
+    if name == "wait":
+        return ["wait", arguments["target"]] + ([str(arguments["seconds"])] if arguments.get("seconds") else [])
+
+    # Everything else passes the arguments it declares, in order, leaving out the ones not given.
+    given = []
+    for argument in TOOLS_BY_NAME[name]["takes"]:
+        value = arguments.get(argument.rstrip("?"))
+        if value not in (None, ""):
+            given.append(str(value))
+    return [name] + given
+
+
+def schema(takes):
+    properties = {}
+    required = []
+    for argument in takes:
+        optional = argument.endswith("?")
+        key = argument.rstrip("?")
+        properties[key] = {"type": "string"}
+        if not optional:
+            required.append(key)
+    return {"type": "object", "properties": properties, "required": required}
+
+
+def run(name, arguments, defaults):
+    """Runs one tool and returns its content blocks, and whether it failed."""
+    package = arguments.get("package") or defaults.get("package")
+    options = []
+    if package:
+        options += ["-p", package]
+    if defaults.get("serial"):
+        options += ["-s", defaults["serial"]]
+    if defaults.get("launch"):
+        options += ["--launch", defaults["launch"]]
+
+    if name == "screenshot":
+        # The CLI prints the file it wrote, so the picture comes back through a file rather than its stdout.
+        with tempfile.NamedTemporaryFile(suffix=".png") as picture:
+            done = subprocess.run([CLI] + options + ["shot", picture.name], capture_output=True, text=True, timeout=120)
+            image = open(picture.name, "rb").read()
+        if done.returncode != 0 or not image:
+            return [{"type": "text", "text": (done.stderr or "screenshot failed").strip()}], True
+        return [{"type": "image", "data": base64.b64encode(image).decode(), "mimeType": "image/png"}], False
+
+    done = subprocess.run([CLI] + options + command_line(name, arguments), capture_output=True, text=True, timeout=120)
+    answer = (done.stdout or "") + (done.stderr or "")
+    return [{"type": "text", "text": answer.strip() or "(no answer)"}], done.returncode != 0
+
+
+TOOLS_BY_NAME = {name: {"takes": takes, "about": about} for name, takes, about in TOOLS}
+
+
+def tool_list():
+    listed = []
+    for name, takes, about in TOOLS:
+        described = schema(takes)
+        # Any tool can be pointed at another app, for a session driving more than one.
+        described["properties"]["package"] = {
+            "type": "string",
+            "description": "applicationId, when it is not the one this server was started for",
+        }
+        listed.append({"name": name, "description": about, "inputSchema": described})
+    return listed
+
+
+def main():
+    defaults = {
+        "package": os.environ.get("VOLITION_PACKAGE"),
+        "serial": os.environ.get("ANDROID_SERIAL"),
+        "launch": os.environ.get("VOLITION_LAUNCH"),
+    }
+    arguments = sys.argv[1:]
+    while arguments:
+        flag = arguments.pop(0)
+        if flag in ("-p", "--package"):
+            defaults["package"] = arguments.pop(0)
+        elif flag in ("-s", "--serial"):
+            defaults["serial"] = arguments.pop(0)
+        elif flag == "--launch":
+            defaults["launch"] = arguments.pop(0)
+        else:
+            sys.stderr.write(f"volition-mcp: unknown option {flag}\n")
+            return 2
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        method = message.get("method")
+        identifier = message.get("id")
+        if identifier is None:
+            # A notification - nothing to answer.
+            continue
+
+        try:
+            if method == "initialize":
+                asked = (message.get("params") or {}).get("protocolVersion")
+                result = {
+                    "protocolVersion": asked or PROTOCOL,
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "volition", "version": version()},
+                }
+            elif method == "tools/list":
+                result = {"tools": tool_list()}
+            elif method == "tools/call":
+                params = message.get("params") or {}
+                name = params.get("name")
+                if name not in TOOLS_BY_NAME:
+                    raise KeyError(f"no tool '{name}'")
+                content, failed = run(name, params.get("arguments") or {}, defaults)
+                result = {"content": content, "isError": failed}
+            elif method == "ping":
+                result = {}
+            else:
+                answer = {"jsonrpc": "2.0", "id": identifier, "error": {"code": -32601, "message": str(method)}}
+                sys.stdout.write(json.dumps(answer) + "\n")
+                sys.stdout.flush()
+                continue
+            answer = {"jsonrpc": "2.0", "id": identifier, "result": result}
+        except Exception as failure:  # noqa: BLE001 - an agent gets the message, not a dead server
+            answer = {"jsonrpc": "2.0", "id": identifier, "error": {"code": -32603, "message": str(failure)}}
+
+        sys.stdout.write(json.dumps(answer) + "\n")
+        sys.stdout.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
