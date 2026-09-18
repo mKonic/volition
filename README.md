@@ -47,7 +47,7 @@ exclusiveContent {
 }
 
 // app/build.gradle.kts
-debugImplementation("dev.mkonic:volition:0.3.0")
+debugImplementation("dev.mkonic:volition:0.4.0")
 ```
 
 `debugImplementation` is the supported way in: the provider Volition is reached through comes with the artifact, so
